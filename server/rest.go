@@ -232,6 +232,7 @@ func (s *RestServer) CreateWebService() {
 		Filter(s.LogFilter).
 		Filter(s.AuthFilter).
 		Filter(s.MetricsFilter).
+		Filter(s.QueryLimitFilter).
 		Filter(otelrestful.OTelFilter("gorse"))
 
 	/* Health check */
@@ -314,6 +315,7 @@ func (s *RestServer) CreateWebService() {
 		Reads(data.ItemPatch{}).
 		Returns(http.StatusOK, "OK", Success{}).
 		Writes(Success{}))
+	s.createVideoHubRoutes(ws)
 	// Get items
 	ws.Route(ws.GET("/items").To(s.getItems).
 		Doc("List items.").
@@ -855,7 +857,7 @@ func (s *RestServer) SearchItemToItem(itemToItemConfig config.ItemToItemConfig, 
 		}
 	}
 	queryN := max(offset+n+readItems.Cardinality(), s.Config.Recommend.CacheSize)
-	results, err := logics.QueryItemToItem(ctx, s.VectorClient, itemToItemConfig, itemId, nil, queryN)
+	results, err := s.queryItemToItem(ctx, itemToItemConfig, itemId, queryN)
 	if err != nil {
 		InternalServerError(response, err)
 		return
@@ -1561,6 +1563,10 @@ func (s *RestServer) batchInsertItems(ctx context.Context, response *restful.Res
 		count++
 	}
 	parseTimesatmpTime = time.Since(start)
+	if err = s.validateItemEmbeddings(items); err != nil {
+		BadRequest(response, err)
+		return
+	}
 
 	// insert items
 	start = time.Now()
@@ -1569,6 +1575,7 @@ func (s *RestServer) batchInsertItems(ctx context.Context, response *restful.Res
 		return
 	}
 	insertItemsTime = time.Since(start)
+	s.indexItemVectors(ctx, items)
 
 	// insert modify timestamp
 	start = time.Now()
@@ -1650,6 +1657,12 @@ func (s *RestServer) modifyItem(request *restful.Request, response *restful.Resp
 		TooManyRequests(response, err)
 		return
 	}
+	if patch.Labels != nil {
+		if err := s.validateItemEmbeddings([]data.Item{{ItemId: itemId, Labels: patch.Labels}}); err != nil {
+			BadRequest(response, err)
+			return
+		}
+	}
 	if patch.Comment != nil {
 		if err := s.checkCommentSize(*patch.Comment); err != nil {
 			TooManyRequests(response, err)
@@ -1681,6 +1694,7 @@ func (s *RestServer) modifyItem(request *restful.Request, response *restful.Resp
 		InternalServerError(response, err)
 		return
 	}
+	s.reindexItem(ctx, itemId, patch)
 	// insert modify timestamp
 	if err := s.CacheClient.Set(ctx, cache.Time(cache.Key(cache.LastModifyItemTime, itemId), time.Now())); err != nil {
 		return
