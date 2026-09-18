@@ -46,6 +46,18 @@ type VectorWriter struct {
 	dimension        *int
 	collectionExists bool
 	buffer           []vectors.Vector
+	// VideoHub fork: writer statistics for observability.
+	added   int
+	skipped int
+	invalid int
+}
+
+// VectorWriterStats reports how many vectors were accepted, how many items were
+// skipped for having no vector and how many were dropped for a dimension mismatch.
+func (w *VectorWriter) VectorWriterStats() (added, skipped, invalid int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.added, w.skipped, w.invalid
 }
 
 func newSimilarityVectorWriter(
@@ -86,13 +98,16 @@ func (w *VectorWriter) Add(vector vectors.Vector) error {
 	defer w.mu.Unlock()
 	if w.sparse {
 		if len(vector.Indices) == 0 || len(vector.Indices) != len(vector.Values) {
+			w.skipped++
 			return nil
 		}
 	} else {
 		if len(vector.Indices) != 0 || len(vector.Values) == 0 {
+			w.skipped++
 			return nil
 		}
 	}
+	w.added++
 	w.buffer = append(w.buffer, vector)
 	if len(w.buffer) >= w.batchSize {
 		return w.flushLocked()
@@ -173,6 +188,7 @@ func (w *VectorWriter) flushLocked() error {
 					zap.String("id", vector.Id),
 					zap.Int("dimension", len(vector.Values)),
 					zap.Int("expected_dimension", dimension))
+				w.invalid++
 				continue
 			}
 			vectorsWithExpectedDimension = append(vectorsWithExpectedDimension, vector)

@@ -250,43 +250,64 @@ func (m *Master) loadDataset(parent context.Context) (datasets Datasets, err err
 
 // runLoadDatasetTask loads dataset.
 func (m *Master) runLoadDatasetTask(ctx context.Context) error {
-	datasets, err := m.loadDataset(ctx)
+	// VideoHub fork: every step runs through runTask, which recovers panics,
+	// counts failures and records durations, so one failing model cannot
+	// terminate the task loop.
+	var datasets Datasets
+	err := m.runTask("load_dataset", func() (err error) {
+		datasets, err = m.loadDataset(ctx)
+		return err
+	})
 	if err != nil {
 		return errors.WithStack(err)
 	}
 	useCollaborativeFilteringTasks := !strings.EqualFold(m.Config.Recommend.Collaborative.Type, "none")
 	useClickThroughRateTasks := strings.EqualFold(m.Config.Recommend.Ranker.Type, "fm")
-	if err = m.updateUserToUser(ctx, datasets.rankingDataset); err != nil {
+	if err = m.runTask("user_to_user", func() error { return m.updateUserToUser(ctx, datasets.rankingDataset) }); err != nil {
 		log.Logger().Error("failed to update user-to-user recommendation", zap.Error(err))
 	}
-	if err = m.updateItemToItem(ctx, datasets.rankingDataset); err != nil {
+	if err = m.runTask("item_to_item", func() error { return m.updateItemToItem(ctx, datasets.rankingDataset) }); err != nil {
 		log.Logger().Error("failed to update item-to-item recommendation", zap.Error(err))
 	}
 	if useCollaborativeFilteringTasks {
-		if err = m.trainCollaborativeFiltering(ctx, datasets.rankingTrainSet, datasets.rankingTestSet); err != nil {
+		if err = m.runTask("train_collaborative_filtering", func() error {
+			return m.trainCollaborativeFiltering(ctx, datasets.rankingTrainSet, datasets.rankingTestSet)
+		}); err != nil {
 			log.Logger().Error("failed to train collaborative filtering model", zap.Error(err))
 		}
 	}
 	if useClickThroughRateTasks {
-		if err = m.trainClickThroughRatePrediction(ctx, datasets.clickTrainSet, datasets.clickTestSet); err != nil {
+		if err = m.runTask("train_click_through_rate", func() error {
+			return m.trainClickThroughRatePrediction(ctx, datasets.clickTrainSet, datasets.clickTestSet)
+		}); err != nil {
 			log.Logger().Error("failed to train click-through rate prediction model", zap.Error(err))
 		}
 	}
 	if m.standalone {
-		if err = m.updateRecommend(ctx); err != nil {
+		if err = m.runTask("update_recommend", func() error { return m.updateRecommend(ctx) }); err != nil {
 			log.Logger().Error("failed to update recommendation", zap.Error(err))
 		}
 	}
-	if err = m.collectGarbage(ctx, datasets.rankingDataset); err != nil {
+	if err = m.runTask("collect_garbage", func() error { return m.collectGarbage(ctx, datasets.rankingDataset) }); err != nil {
 		log.Logger().Error("failed to collect garbage in cache", zap.Error(err))
 	}
+	if err = m.runTask("vector_store_stats", func() error { return m.collectVectorStoreStats(ctx) }); err != nil {
+		log.Logger().Error("failed to collect vector store statistics", zap.Error(err))
+	}
+	if err = m.runTask("cache_stats", func() error { return m.collectCacheStats(ctx) }); err != nil {
+		log.Logger().Error("failed to collect cache statistics", zap.Error(err))
+	}
 	if useCollaborativeFilteringTasks && m.Config.Recommend.Collaborative.OptimizePeriod > 0 {
-		if err = m.optimizeCollaborativeFiltering(ctx, datasets.rankingTrainSet, datasets.rankingTestSet); err != nil {
+		if err = m.runTask("optimize_collaborative_filtering", func() error {
+			return m.optimizeCollaborativeFiltering(ctx, datasets.rankingTrainSet, datasets.rankingTestSet)
+		}); err != nil {
 			log.Logger().Error("failed to optimize collaborative filtering model", zap.Error(err))
 		}
 	}
 	if useClickThroughRateTasks && m.Config.Recommend.Ranker.OptimizePeriod > 0 {
-		if err = m.optimizeClickThroughRatePrediction(ctx, datasets.clickTrainSet, datasets.clickTestSet); err != nil {
+		if err = m.runTask("optimize_click_through_rate", func() error {
+			return m.optimizeClickThroughRatePrediction(ctx, datasets.clickTrainSet, datasets.clickTestSet)
+		}); err != nil {
 			log.Logger().Error("failed to optimize click-through rate prediction model", zap.Error(err))
 		}
 	}
@@ -727,12 +748,22 @@ func (m *Master) LoadDataFromDatabase(
 			}
 		}
 	}
+	var malformedEmbeddings int
 	for i, embeddings := range itemEmbeddings {
 		for j, embedding := range embeddings {
 			if len(embedding) != ctrDataset.ItemEmbeddingDimension[j] {
+				if embedding != nil {
+					malformedEmbeddings++
+				}
 				itemEmbeddings[i][j] = nil
 			}
 		}
+	}
+	CTRMalformedEmbeddings.Set(float64(malformedEmbeddings))
+	if malformedEmbeddings > 0 {
+		log.Logger().Warn("dropped item embeddings with unexpected dimension from click-through rate dataset",
+			zap.Int("n_malformed_embeddings", malformedEmbeddings),
+			zap.Ints("expected_dimensions", ctrDataset.ItemEmbeddingDimension))
 	}
 	ctrDataset.ItemEmbeddings = itemEmbeddings
 	for userIndex := range positiveFeedback {
@@ -820,10 +851,11 @@ func (m *Master) updateItemToItem(parent context.Context, dataset *dataset.Datas
 	}); err != nil {
 		return errors.WithStack(err)
 	}
-	for _, recommender := range itemToItemRecommenders {
+	for i, recommender := range itemToItemRecommenders {
 		if err := recommender.Clean(); err != nil {
 			return errors.WithStack(err)
 		}
+		m.publishItemToItemStats(ctx, m.Config.Recommend.ItemToItem[i].Name, recommender)
 	}
 	return nil
 }
@@ -1013,6 +1045,7 @@ func (m *Master) trainCollaborativeFiltering(parent context.Context, trainSet, t
 	m.collaborativeFilteringMeta = collaborativeFilteringMeta
 	m.collaborativeFilteringTrainSetSize = trainSet.CountFeedback()
 	m.collaborativeFilteringModelMutex.Unlock()
+	ModelIdVec.WithLabelValues("collaborative_filtering").Set(float64(collaborativeFilteringModelId))
 	log.Logger().Info("write collaborative filtering model meta",
 		zap.Int64("id", collaborativeFilteringModelId),
 		zap.Float32("ndcg", score.NDCG),
@@ -1128,6 +1161,7 @@ func (m *Master) trainClickThroughRatePrediction(parent context.Context, trainSe
 	m.clickThroughRateMeta.Params = clickThroughRateParams
 	m.clickThroughRateMeta.Score = score
 	m.clickThroughRateModelMutex.Unlock()
+	ModelIdVec.WithLabelValues("click_through_rate").Set(float64(clickThroughRateModelId))
 	if err = m.metaStore.Put(meta.CLICK_THROUGH_RATE_MODEL, m.clickThroughRateMeta.ToJSON()); err != nil {
 		log.Logger().Error("failed to write click-through rate model meta", zap.Error(err))
 		return err
@@ -1242,7 +1276,9 @@ func (m *Master) removeOutOfDateModels(ctx context.Context) {
 func (m *Master) collectGarbage(parent context.Context, dataSet *dataset.Dataset) error {
 	ctx, span := m.tracer.Start(parent, "Collect Garbage in Cache", 1)
 	defer span.End()
+	documentCounts := make(map[string]int64)
 	err := m.CacheClient.ScanScores(ctx, func(collection, id, subset string, timestamp time.Time) error {
+		documentCounts[cacheDocumentLabel(collection, subset)]++
 		switch collection {
 		case cache.NonPersonalized:
 			if !lo.ContainsBy(m.Config.Recommend.NonPersonalized, func(cfg config.NonPersonalizedConfig) bool {
@@ -1262,6 +1298,10 @@ func (m *Master) collectGarbage(parent context.Context, dataSet *dataset.Dataset
 		}
 		return nil
 	})
+	CacheDocumentsTotalVec.Reset()
+	for label, count := range documentCounts {
+		CacheDocumentsTotalVec.WithLabelValues(label).Set(float64(count))
+	}
 	return errors.WithStack(err)
 }
 

@@ -215,11 +215,13 @@ func (fm *AFM) BatchPredict(inputs []lo.Tuple4[string, string, []Label, []Label]
 			itemIndex := fm.embeddingIndex.ToNumber(embedding.Name)
 			if itemIndex == dataset.NotId {
 				// unknown embedding
+				SkippedEmbeddingsTotal.WithLabelValues("unknown_name").Inc()
 				continue
 			}
 			index := int(itemIndex)
 			if len(embedding.Value) != fm.embeddingDim[index] {
 				// dimension mismatch
+				SkippedEmbeddingsTotal.WithLabelValues("dimension_mismatch").Inc()
 				continue
 			}
 			e[i][index] = embedding.Value

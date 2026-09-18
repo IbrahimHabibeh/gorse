@@ -342,6 +342,7 @@ func (m *Master) Serve() {
 				zap.String("type", m.collaborativeFilteringMeta.Type),
 				zap.Any("params", m.collaborativeFilteringMeta.Params),
 				zap.Any("score", m.collaborativeFilteringMeta.Score))
+			ModelIdVec.WithLabelValues("collaborative_filtering").Set(float64(m.collaborativeFilteringMeta.ID))
 		}
 	}
 
@@ -357,6 +358,7 @@ func (m *Master) Serve() {
 				zap.String("type", m.clickThroughRateMeta.Type),
 				zap.Any("params", m.clickThroughRateMeta.Params),
 				zap.Any("score", m.clickThroughRateMeta.Score))
+			ModelIdVec.WithLabelValues("click_through_rate").Set(float64(m.clickThroughRateMeta.ID))
 		}
 	}
 

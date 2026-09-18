@@ -289,6 +289,7 @@ func (w *Worker) Pull() {
 				} else {
 					log.Logger().Info("synced collaborative filtering model",
 						zap.Int64("id", w.GetMatrixFactorizationId()))
+					ModelIdVec.WithLabelValues("collaborative_filtering").Set(float64(w.GetMatrixFactorizationId()))
 					pulled = true
 				}
 			}
@@ -309,6 +310,7 @@ func (w *Worker) Pull() {
 					w.clickThroughRateModelId = w.latestClickThroughRateModelId
 					log.Logger().Info("synced click-through rate model",
 						zap.Int64("version", w.clickThroughRateModelId))
+					ModelIdVec.WithLabelValues("click_through_rate").Set(float64(w.clickThroughRateModelId))
 					pulled = true
 				}
 			}

@@ -177,8 +177,12 @@ func (p *Pipeline) Recommend(ctx context.Context, users []data.User, progress fu
 		}()
 		user := users[jobId]
 		userId := user.UserId
+		defer recoverUserJob(userId)
+		outcome := "failed"
+		defer func() { RecommendOutcomesTotal.WithLabelValues(outcome).Inc() }()
 		// skip inactive users before max recommend period
 		if !p.checkUserActiveTime(ctx, userId) || !p.checkRecommendCacheOutOfDate(ctx, userId) {
+			outcome = "skipped_up_to_date"
 			return
 		}
 		updateUserCount.Add(1)
@@ -191,6 +195,7 @@ func (p *Pipeline) Recommend(ctx context.Context, users []data.User, progress fu
 		}
 		if !p.dontskipColdStartUsers && recommender.IsColdStart() {
 			// skip cold-start users without any positive feedback
+			outcome = "skipped_cold_start"
 			return
 		}
 
@@ -204,6 +209,7 @@ func (p *Pipeline) Recommend(ctx context.Context, users []data.User, progress fu
 				}
 			} else if !p.dontskipColdStartUsers {
 				// skip users without collaborative filtering embeddings
+				outcome = "skipped_no_cf_embedding"
 				return
 			}
 		}
@@ -259,8 +265,12 @@ func (p *Pipeline) Recommend(ctx context.Context, users []data.User, progress fu
 		if p.Config.Recommend.Ranker.Type == "fm" && p.ClickThroughRateModel != nil && !p.ClickThroughRateModel.Invalid() {
 			results, err = p.rankByClickTroughRate(ctx, p.ClickThroughRateModel, &user, candidates, itemCache, recommendTime)
 			if err != nil {
-				log.Logger().Error("failed to rank items", zap.Error(err))
-				return
+				// VideoHub fork: a failing ranker degrades to the unranked
+				// candidate order instead of leaving the user without
+				// recommendations.
+				log.Logger().Error("failed to rank items, using unranked candidates",
+					zap.String("user_id", userId), zap.Error(err))
+				results = candidates
 			}
 		} else if p.Config.Recommend.Ranker.Type == "llm" && p.Config.OpenAI.ChatCompletionModel != "" {
 			ranker, err := logics.NewChatReranker(
@@ -303,6 +313,7 @@ func (p *Pipeline) Recommend(ctx context.Context, users []data.User, progress fu
 		); err != nil {
 			log.Logger().Error("failed to cache recommendation time", zap.Error(err))
 		}
+		outcome = "updated"
 	}); err != nil {
 		log.Logger().Error("recommendation was cancelled", zap.Error(err))
 	}
@@ -475,7 +486,10 @@ func (p *Pipeline) rankByClickTroughRate(
 			inputs[i].D = ctr.ConvertLabels(item.Labels)
 			embeddings[i] = ctr.ConvertEmbeddings(item.Labels)
 		}
-		output := batchPredictor.BatchPredict(inputs, embeddings, p.Jobs)
+		output, err := safeBatchPredict(batchPredictor, user.UserId, inputs, embeddings, p.Jobs)
+		if err != nil {
+			return nil, err
+		}
 		for i, score := range output {
 			topItems = append(topItems, cache.Score{
 				Id:         items[i].ItemId,
