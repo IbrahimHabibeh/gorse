@@ -1277,9 +1277,16 @@ func (m *Master) collectGarbage(parent context.Context, dataSet *dataset.Dataset
 	ctx, span := m.tracer.Start(parent, "Collect Garbage in Cache", 1)
 	defer span.End()
 	documentCounts := make(map[string]int64)
+	var legacyDocuments int64
 	err := m.CacheClient.ScanScores(ctx, func(collection, id, subset string, timestamp time.Time) error {
 		documentCounts[cacheDocumentLabel(collection, subset)]++
 		switch collection {
+		case cache.ItemToItem, cache.UserToUser:
+			// VideoHub fork: neighbor documents were written to the cache
+			// store by Gorse <= 0.5.x. Similarity now lives in the vector
+			// store and nothing reclaims these, so purge them.
+			legacyDocuments++
+			return m.CacheClient.DeleteScores(ctx, []string{collection}, cache.ScoreCondition{Subset: new(subset)})
 		case cache.NonPersonalized:
 			if !lo.ContainsBy(m.Config.Recommend.NonPersonalized, func(cfg config.NonPersonalizedConfig) bool {
 				return cfg.Name == subset
@@ -1301,6 +1308,9 @@ func (m *Master) collectGarbage(parent context.Context, dataSet *dataset.Dataset
 	CacheDocumentsTotalVec.Reset()
 	for label, count := range documentCounts {
 		CacheDocumentsTotalVec.WithLabelValues(label).Set(float64(count))
+	}
+	if legacyDocuments > 0 {
+		log.Logger().Info("reclaimed legacy neighbor documents from cache store", zap.Int64("n_documents", legacyDocuments))
 	}
 	return errors.WithStack(err)
 }

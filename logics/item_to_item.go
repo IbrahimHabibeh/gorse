@@ -26,6 +26,7 @@ import (
 	"github.com/gorse-io/gorse/common/log"
 	"github.com/gorse-io/gorse/config"
 	"github.com/gorse-io/gorse/dataset"
+	"github.com/gorse-io/gorse/storage"
 	"github.com/gorse-io/gorse/storage/cache"
 	"github.com/gorse-io/gorse/storage/data"
 	"github.com/gorse-io/gorse/storage/vectors"
@@ -51,6 +52,12 @@ func QueryItemToItem(ctx context.Context, vectorClient vectors.Database, itemToI
 	collection := vectors.ItemToItemCollection(itemToItemConfig.Name)
 	queries, err := vectorClient.GetVectors(ctx, collection, []string{itemId})
 	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			// VideoHub fork: a recommender whose collection has not been
+			// built yet (no item had a vector) has no neighbors; failing
+			// here aborted every offline recommendation that used it.
+			return nil, nil
+		}
 		return nil, errors.WithStack(err)
 	}
 	if len(queries) == 0 {
@@ -155,6 +162,11 @@ func ExtractItemEmbedding(item *data.Item, columnFunc *vm.Program) ([]float32, b
 	result, err := expr.Run(columnFunc, map[string]any{"item": item})
 	if err != nil {
 		log.Logger().Error("failed to evaluate column expression", zap.Any("item", item), zap.Error(err))
+		return nil, false
+	}
+	if result == nil {
+		// VideoHub fork: items without the column are expected and counted by
+		// VectorWriterStats; logging an error per item drowned real failures.
 		return nil, false
 	}
 	v, ok := bfloats.FromAny(result)

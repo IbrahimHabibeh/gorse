@@ -46,6 +46,7 @@ Small hooks into upstream files (each a few lines, marked with a
 - `master/master.go`: model id gauges when meta is loaded at startup.
 - `model/ctr/fm.go`, `fm_xla.go`: skipped-embedding counters.
 - `logics/vector_writer.go`: `VectorWriterStats`.
+- `logics/item_to_item.go`: missing collection means "no neighbors"; no error log per item without an embedding.
 
 ## Configuration
 
@@ -122,6 +123,12 @@ per request from the vector index. What remains in Redis:
 | `last_modify_item_time/<item>` etc.     | one small key per item / user                    | never deleted                               |
 | time series points                      | one point per metric per cycle                   | never deleted (upstream behaviour)          |
 
+**Superseded generations.** A cache store that served 0.5.x still holds those
+neighbor hashes (a VideoHub dev instance had ~28k of them) and upstream `master`
+never reclaims them. The fork's garbage collection deletes every document in the
+`item-to-item` and `user-to-user` collections, which nothing writes any more,
+and logs how many it reclaimed.
+
 Telemetry added so this stays visible: `gorse_master_cache_documents_total{collection}`
 (counted during the existing garbage-collection scan, no extra scan) and
 `gorse_master_cache_memory_bytes` (Redis `used_memory`). Vector store growth is
@@ -152,6 +159,12 @@ an item is written, without waiting for the master job:
   hidden/category flags and removes vectors of deleted items. Vectors written
   incrementally carry the write time as timestamp, so the job's cleanup (which
   deletes vectors older than its dataset snapshot) never removes them.
+- A recommender whose collection has not been built yet (no item had a vector
+  when the master job ran) now yields no neighbors instead of an error. Upstream
+  failed the whole offline recommendation of every user on that error, so a
+  catalog without embeddings received no recommendations at all.
+- The master job no longer logs an error for every item that lacks the
+  embedding column; the count is exposed as `gorse_master_item_to_item_items_without_vector`.
 - Tags/users/auto recommenders are not indexed incrementally because their
   sparse vectors depend on dataset-wide IDF weights only the master job knows.
 - Vector writes from server nodes reach the master's `xvec` store through the

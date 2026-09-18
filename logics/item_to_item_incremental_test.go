@@ -191,9 +191,10 @@ func TestQueryItemToItemWithFallback(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, usedFallback)
 	assert.Empty(t, scores)
-	_, _, err = QueryItemToItemWithFallback(ctx, vectorClient, dataClient,
+	scores, _, err = QueryItemToItemWithFallback(ctx, vectorClient, dataClient,
 		config.ItemToItemConfig{Name: "other", Type: "embedding", Column: "item.Labels.embedding"}, "new", nil, 10, false)
-	assert.Error(t, err, "upstream behaviour is kept when the fallback is disabled")
+	require.NoError(t, err, "a missing collection is empty even without the fallback")
+	assert.Empty(t, scores)
 
 	// tags recommenders never fall back
 	scores, usedFallback, err = QueryItemToItemWithFallback(ctx, vectorClient, dataClient,
@@ -216,4 +217,12 @@ func TestVectorWriterStats(t *testing.T) {
 	assert.Equal(t, 3, added)
 	assert.Equal(t, 1, skipped)
 	assert.Equal(t, 1, invalid)
+}
+
+func TestQueryItemToItemMissingCollection(t *testing.T) {
+	vectorClient, _ := newIncrementalFixture(t)
+	cfg := config.ItemToItemConfig{Name: "unbuilt", Type: "embedding", Column: "item.Labels.embedding"}
+	scores, err := QueryItemToItem(t.Context(), vectorClient, cfg, "any", nil, 10)
+	require.NoError(t, err, "a recommender without a collection has no neighbors instead of failing the caller")
+	assert.Empty(t, scores)
 }

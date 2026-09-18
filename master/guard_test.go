@@ -72,6 +72,23 @@ func (s *MasterTestSuite) TestCollectGarbageCountsDocuments() {
 	s.Equal(float64(1), metricValue(CacheDocumentsTotalVec.WithLabelValues(cache.NonPersonalized+"/popular")))
 }
 
+func (s *MasterTestSuite) TestCollectGarbageReclaimsLegacyNeighborDocuments() {
+	ctx := s.T().Context()
+	s.NoError(s.CacheClient.AddScores(ctx, cache.ItemToItem, "neighbors/item1", []cache.Score{{Id: "item2", Score: 1}}))
+	s.NoError(s.CacheClient.AddScores(ctx, cache.UserToUser, "neighbors/user1", []cache.Score{{Id: "user2", Score: 1}}))
+	s.NoError(s.CacheClient.AddScores(ctx, cache.Recommend, "user1", []cache.Score{{Id: "item1", Score: 1}}))
+	s.NoError(s.collectGarbage(ctx, dataset.NewDataset(time.Now(), 0, 0)))
+	legacy, err := s.CacheClient.SearchScores(ctx, cache.ItemToItem, "neighbors/item1", nil, 0, 10)
+	s.NoError(err)
+	s.Empty(legacy)
+	legacy, err = s.CacheClient.SearchScores(ctx, cache.UserToUser, "neighbors/user1", nil, 0, 10)
+	s.NoError(err)
+	s.Empty(legacy)
+	kept, err := s.CacheClient.SearchScores(ctx, cache.Recommend, "user1", nil, 0, 10)
+	s.NoError(err)
+	s.Len(kept, 1)
+}
+
 // metricValue reads the current value of a counter or gauge without pulling
 // prometheus/testutil (and its extra module requirements) into go.mod.
 func metricValue(m prometheus.Metric) float64 {
