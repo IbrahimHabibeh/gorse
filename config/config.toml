@@ -462,3 +462,24 @@ max_categories_count = 0
 
 # Maximum size of Categories JSON in bytes. Multi-byte UTF-8 characters count by bytes. 0 means no limit.
 max_categories_size = 0
+
+[videohub]
+
+# VideoHub fork extensions. All features are disabled by default.
+
+# Index embedding-based item-to-item vectors when items are inserted or patched and
+# answer neighbor queries from the item's stored embedding when no vector has been
+# indexed yet, so new items have neighbors before the next item-to-item job.
+incremental_item_to_item = false
+
+# Enable PATCH /api/item/{item-id}/labels which merges the request body into the
+# existing label object key by key (null removes a key). Lets a client replace an
+# embedding without resending the rest of the item.
+label_patch = false
+
+# Reject item writes whose embedding column has a different number of dimensions.
+# 0 disables the check.
+embedding_dimensions = 0
+
+# Cap the "n" query parameter of every API endpoint. 0 disables the cap.
+max_query_n = 0

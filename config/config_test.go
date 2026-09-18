@@ -52,6 +52,10 @@ func TestUnmarshal(t *testing.T) {
 	text = strings.Replace(text, "redirect_url = \"\"", "redirect_url = \"http://localhost:8088/callback/oauth2\"", -1)
 	text = strings.Replace(text, "auth_token = \"\"", "auth_token = \"<reranker_auth_token>\"", -1)
 	text = strings.Replace(text, "url = \"https://dashscope.aliyuncs.com/compatible-api/v1/reranks\"", "url = \"<reranker_url>\"", -1)
+	text = strings.Replace(text, "incremental_item_to_item = false", "incremental_item_to_item = true", -1)
+	text = strings.Replace(text, "label_patch = false", "label_patch = true", -1)
+	text = strings.Replace(text, "embedding_dimensions = 0", "embedding_dimensions = 256", -1)
+	text = strings.Replace(text, "max_query_n = 0", "max_query_n = 500", -1)
 	r, err := convert.TOML{}.Decode(bytes.NewBufferString(text))
 	assert.NoError(t, err)
 
@@ -154,6 +158,11 @@ func TestUnmarshal(t *testing.T) {
 			assert.Equal(t, "http://localhost:4317", config.Tracing.CollectorEndpoint)
 			assert.Equal(t, "always", config.Tracing.Sampler)
 			assert.Equal(t, 1.0, config.Tracing.Ratio)
+			// [videohub]
+			assert.True(t, config.VideoHub.IncrementalItemToItem)
+			assert.True(t, config.VideoHub.LabelPatch)
+			assert.Equal(t, 256, config.VideoHub.EmbeddingDimensions)
+			assert.Equal(t, 500, config.VideoHub.MaxQueryN)
 			// [oauth2]
 			assert.Equal(t, "https://accounts.google.com", config.OIDC.Issuer)
 			assert.Equal(t, "client_id", config.OIDC.ClientID)
@@ -235,6 +244,10 @@ func TestBindEnv(t *testing.T) {
 		{"GORSE_DASHBOARD_REDACTED", "true"},
 		{"GORSE_ADMIN_API_KEY", "<admin_api_key>"},
 		{"GORSE_SERVER_API_KEY", "<server_api_key>"},
+		{"GORSE_VIDEOHUB_INCREMENTAL_ITEM_TO_ITEM", "true"},
+		{"GORSE_VIDEOHUB_LABEL_PATCH", "true"},
+		{"GORSE_VIDEOHUB_EMBEDDING_DIMENSIONS", "256"},
+		{"GORSE_VIDEOHUB_MAX_QUERY_N", "500"},
 		{"GORSE_OIDC_ENABLE", "true"},
 		{"GORSE_OIDC_ISSUER", "https://accounts.google.com"},
 		{"GORSE_OIDC_CLIENT_ID", "client_id"},
@@ -318,6 +331,10 @@ func TestBindEnv(t *testing.T) {
 	assert.Equal(t, 12, config.Quota.MaxCommentSize)
 	assert.Equal(t, 13, config.Quota.MaxCategoriesCount)
 	assert.Equal(t, 14, config.Quota.MaxCategoriesSize)
+	assert.True(t, config.VideoHub.IncrementalItemToItem)
+	assert.True(t, config.VideoHub.LabelPatch)
+	assert.Equal(t, 256, config.VideoHub.EmbeddingDimensions)
+	assert.Equal(t, 500, config.VideoHub.MaxQueryN)
 
 	// check default values
 	assert.Equal(t, 100, config.Recommend.CacheSize)

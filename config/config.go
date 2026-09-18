@@ -70,6 +70,7 @@ type Config struct {
 	OpenAI    OpenAIConfig    `mapstructure:"openai"`
 	Blob      BlobConfig      `mapstructure:"blob"`
 	Quota     QuotaConfig     `mapstructure:"quota"`
+	VideoHub  VideoHubConfig  `mapstructure:"videohub"`
 }
 
 // DatabaseConfig is the configuration for the database.
@@ -491,6 +492,23 @@ type QuotaConfig struct {
 	MaxCategoriesSize  int `mapstructure:"max_categories_size" validate:"gte=0"`  // Max size of Categories in bytes (0 = no limit)
 }
 
+// VideoHubConfig holds the VideoHub fork extensions. Every feature is opt-in so
+// that the defaults preserve upstream behaviour.
+type VideoHubConfig struct {
+	// IncrementalItemToItem indexes embedding-based item-to-item vectors when
+	// items are inserted or patched and answers neighbor queries from the
+	// item's stored embedding when no vector has been indexed yet.
+	IncrementalItemToItem bool `mapstructure:"incremental_item_to_item"`
+	// LabelPatch enables PATCH /api/item/{item-id}/labels which merges the
+	// request body into the existing label object key by key.
+	LabelPatch bool `mapstructure:"label_patch"`
+	// EmbeddingDimensions rejects item writes whose embedding column length
+	// differs. 0 disables the check.
+	EmbeddingDimensions int `mapstructure:"embedding_dimensions" validate:"gte=0"`
+	// MaxQueryN caps the n query parameter of every API endpoint. 0 disables the cap.
+	MaxQueryN int `mapstructure:"max_query_n" validate:"gte=0"`
+}
+
 func GetDefaultConfig() *Config {
 	return &Config{
 		Database: DatabaseConfig{
@@ -723,6 +741,11 @@ func setDefault() {
 	viper.SetDefault("quota.max_comment_size", defaultConfig.Quota.MaxCommentSize)
 	viper.SetDefault("quota.max_categories_count", defaultConfig.Quota.MaxCategoriesCount)
 	viper.SetDefault("quota.max_categories_size", defaultConfig.Quota.MaxCategoriesSize)
+	// [videohub]
+	viper.SetDefault("videohub.incremental_item_to_item", defaultConfig.VideoHub.IncrementalItemToItem)
+	viper.SetDefault("videohub.label_patch", defaultConfig.VideoHub.LabelPatch)
+	viper.SetDefault("videohub.embedding_dimensions", defaultConfig.VideoHub.EmbeddingDimensions)
+	viper.SetDefault("videohub.max_query_n", defaultConfig.VideoHub.MaxQueryN)
 }
 
 type configBinding struct {
@@ -756,6 +779,10 @@ var bindings = []configBinding{
 	{"master.dashboard_redacted", "GORSE_DASHBOARD_REDACTED"},
 	{"master.admin_api_key", "GORSE_ADMIN_API_KEY"},
 	{"server.api_key", "GORSE_SERVER_API_KEY"},
+	{"videohub.incremental_item_to_item", "GORSE_VIDEOHUB_INCREMENTAL_ITEM_TO_ITEM"},
+	{"videohub.label_patch", "GORSE_VIDEOHUB_LABEL_PATCH"},
+	{"videohub.embedding_dimensions", "GORSE_VIDEOHUB_EMBEDDING_DIMENSIONS"},
+	{"videohub.max_query_n", "GORSE_VIDEOHUB_MAX_QUERY_N"},
 	{"oidc.enable", "GORSE_OIDC_ENABLE"},
 	{"oidc.issuer", "GORSE_OIDC_ISSUER"},
 	{"oidc.client_id", "GORSE_OIDC_CLIENT_ID"},
