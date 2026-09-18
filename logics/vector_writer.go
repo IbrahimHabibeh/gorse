@@ -214,8 +214,14 @@ func newSparseVector[T ~int32](ids []T, idf []float32, offset uint32) vectors.Ve
 }
 
 func appendSparseVector[T ~int32](vector vectors.Vector, ids []T, idf []float32, offset uint32) vectors.Vector {
-	for _, id := range ids {
+	for i, id := range ids {
 		if id < 0 || int(id) >= len(idf) || idf[id] <= 0 {
+			continue
+		}
+		if i > 0 && ids[i-1] == id {
+			// VideoHub fork: callers pass sorted ids that may repeat (a user
+			// with several feedback types on one item); the vector store
+			// rejects duplicate sparse coordinates.
 			continue
 		}
 		vector.Indices = append(vector.Indices, offset+uint32(id))

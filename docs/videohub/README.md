@@ -46,7 +46,9 @@ Small hooks into upstream files (each a few lines, marked with a
 - `master/master.go`: model id gauges when meta is loaded at startup.
 - `model/ctr/fm.go`, `fm_xla.go`: skipped-embedding counters.
 - `logics/vector_writer.go`: `VectorWriterStats`.
-- `logics/item_to_item.go`: missing collection means "no neighbors"; no error log per item without an embedding.
+- `logics/item_to_item.go`: missing collection means "no neighbors"; no error log per item without labels or an embedding.
+- `logics/vector_writer.go`: `appendSparseVector` drops repeated ids (a user with several feedback types on one item made the vector store reject the user-to-user vector with "duplicate coordinate").
+- `storage/cache/redis.go`: the document scan skips hashes deleted while scanning instead of failing garbage collection.
 
 ## Configuration
 

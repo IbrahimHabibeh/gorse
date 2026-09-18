@@ -453,6 +453,11 @@ func (r *Redis) scanScores(ctx context.Context, client redis.UniversalClient, ca
 			if err != nil {
 				return errors.WithStack(err)
 			}
+			if len(row) == 0 {
+				// VideoHub fork: the document was deleted while scanning
+				// (garbage collection reclaims inside the callback).
+				continue
+			}
 			var usec int64
 			usec, err = util.ParseInt[int64](row["timestamp"])
 			if err != nil {

@@ -159,6 +159,9 @@ func (e *embeddingItemToItem) Add(item *data.Item, _ []int32) error {
 }
 
 func ExtractItemEmbedding(item *data.Item, columnFunc *vm.Program) ([]float32, bool) {
+	if item.Labels == nil {
+		return nil, false
+	}
 	result, err := expr.Run(columnFunc, map[string]any{"item": item})
 	if err != nil {
 		log.Logger().Error("failed to evaluate column expression", zap.Any("item", item), zap.Error(err))
@@ -192,6 +195,10 @@ func newTagsItemToItem(cfg config.ItemToItemConfig, timestamp time.Time, opts *I
 }
 
 func (t *tagsItemToItem) Add(item *data.Item, _ []int32) error {
+	if item.Labels == nil {
+		// VideoHub fork: no labels means no tags; do not log per item.
+		return t.VectorWriter.Add(vectors.Vector{Id: item.ItemId})
+	}
 	result, err := expr.Run(t.columnFunc, map[string]any{"item": item})
 	if err != nil {
 		log.Logger().Error("failed to evaluate column expression", zap.Any("item", item), zap.Error(err))

@@ -1277,16 +1277,20 @@ func (m *Master) collectGarbage(parent context.Context, dataSet *dataset.Dataset
 	ctx, span := m.tracer.Start(parent, "Collect Garbage in Cache", 1)
 	defer span.End()
 	documentCounts := make(map[string]int64)
-	var legacyDocuments int64
+	legacySubsets := make(map[string]map[string]struct{})
 	err := m.CacheClient.ScanScores(ctx, func(collection, id, subset string, timestamp time.Time) error {
 		documentCounts[cacheDocumentLabel(collection, subset)]++
 		switch collection {
 		case cache.ItemToItem, cache.UserToUser:
 			// VideoHub fork: neighbor documents were written to the cache
 			// store by Gorse <= 0.5.x. Similarity now lives in the vector
-			// store and nothing reclaims these, so purge them.
-			legacyDocuments++
-			return m.CacheClient.DeleteScores(ctx, []string{collection}, cache.ScoreCondition{Subset: new(subset)})
+			// store and nothing reclaims these. Collect them here and purge
+			// after the scan: deleting while scanning breaks the iteration.
+			if legacySubsets[collection] == nil {
+				legacySubsets[collection] = make(map[string]struct{})
+			}
+			legacySubsets[collection][subset] = struct{}{}
+			return nil
 		case cache.NonPersonalized:
 			if !lo.ContainsBy(m.Config.Recommend.NonPersonalized, func(cfg config.NonPersonalizedConfig) bool {
 				return cfg.Name == subset
@@ -1309,10 +1313,20 @@ func (m *Master) collectGarbage(parent context.Context, dataSet *dataset.Dataset
 	for label, count := range documentCounts {
 		CacheDocumentsTotalVec.WithLabelValues(label).Set(float64(count))
 	}
-	if legacyDocuments > 0 {
-		log.Logger().Info("reclaimed legacy neighbor documents from cache store", zap.Int64("n_documents", legacyDocuments))
+	if err != nil {
+		return errors.WithStack(err)
 	}
-	return errors.WithStack(err)
+	for collection, subsets := range legacySubsets {
+		for subset := range subsets {
+			if err = m.CacheClient.DeleteScores(ctx, []string{collection}, cache.ScoreCondition{Subset: new(subset)}); err != nil {
+				return errors.WithStack(err)
+			}
+		}
+		log.Logger().Info("reclaimed legacy neighbor documents from cache store",
+			zap.String("collection", collection),
+			zap.Int64("n_documents", documentCounts[collection]))
+	}
+	return nil
 }
 
 func (m *Master) optimizeCollaborativeFiltering(parent context.Context, trainSet, testSet dataset.CFSplit) error {

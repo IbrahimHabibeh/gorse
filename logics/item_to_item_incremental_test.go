@@ -226,3 +226,10 @@ func TestQueryItemToItemMissingCollection(t *testing.T) {
 	require.NoError(t, err, "a recommender without a collection has no neighbors instead of failing the caller")
 	assert.Empty(t, scores)
 }
+
+func TestAppendSparseVectorDeduplicates(t *testing.T) {
+	idf := []float32{1, 1, 1, 1}
+	vector := newSparseVector([]int32{0, 1, 1, 3, 3, 3}, idf, 0)
+	assert.Equal(t, []uint32{0, 1, 3}, vector.Indices)
+	assert.Len(t, vector.Values, 3)
+}
